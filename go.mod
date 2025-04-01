@@ -1,4 +1,4 @@
-module goproxy
+module github.com/fasnow/goproxy
 
 go 1.24.1
 

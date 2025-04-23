@@ -31,6 +31,21 @@ type GoProxy struct {
 	mu       sync.Mutex   // 互斥锁，用于保护并发操作
 }
 
+func New() *GoProxy {
+	return &GoProxy{
+		client: &http.Client{
+			Transport: &CustomTransport{
+				GlobalHeader: http.Header{"User-Agent": []string{DefaultUA}},
+			},
+			Timeout: DefaultTimeout,
+			// 禁止重定向
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
+}
+
 // CustomTransport 自定义传输层，用于处理HTTP请求的传输
 type CustomTransport struct {
 	// GlobalHeader 用于存储自定义的HTTP请求头
@@ -104,6 +119,10 @@ func (c *CustomTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for key, values := range c.GlobalHeader {
 		for _, value := range values {
 			if singleValueHeaders[key] {
+				// req中的优先级更高
+				if _, ok := req.Header[key]; ok {
+					continue
+				}
 				// 对于单值请求头,使用Set覆盖
 				req.Header.Set(key, value)
 				break // 只使用第一个值

@@ -36,6 +36,7 @@ func New() *GoProxy {
 		client: &http.Client{
 			Transport: &CustomTransport{
 				GlobalHeader: http.Header{"User-Agent": []string{DefaultUA}},
+				Transport:    &http.Transport{},
 			},
 			Timeout: DefaultTimeout,
 			// 禁止重定向

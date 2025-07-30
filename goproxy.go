@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultUA 定义默认的User-Agent字符串
-const DefaultUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0"
+const DefaultUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 
 // DefaultTimeout 定义默认的HTTP请求超时时间
 const DefaultTimeout = 20 * time.Second

@@ -3,6 +3,7 @@ package goproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,7 +37,9 @@ func New() *GoProxy {
 		client: &http.Client{
 			Transport: &CustomTransport{
 				GlobalHeader: http.Header{"User-Agent": []string{DefaultUA}},
-				Transport:    &http.Transport{},
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				},
 			},
 			Timeout: DefaultTimeout,
 			// 禁止重定向
@@ -143,35 +146,27 @@ func (c *CustomTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return c.Transport.RoundTrip(req)
 }
 
-// cloneDefaultTransport 克隆默认的HTTP传输配置
-func cloneDefaultTransport() *http.Transport {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	return t
-}
-
 // SetProxy 设置代理服务器
 // 支持HTTP、HTTPS和SOCKS5代理
 // 参数s为空字符串时表示不使用代理
 func (r *GoProxy) SetProxy(s string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ct := r.client.Transport.(*CustomTransport)
 	if s == "" {
-		r.client.Transport = &CustomTransport{
-			GlobalHeader: r.client.Transport.(*CustomTransport).GlobalHeader,
-			Transport:    cloneDefaultTransport(),
-		}
 		r.proxyUrl = ""
-		return nil
+		return nil // 不使用代理，设置成功
 	}
 
 	proxyURL, err := url.Parse(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("代理地址解析失败: %w", err)
 	}
-
-	var t = cloneDefaultTransport()
 
 	switch proxyURL.Scheme {
 	case "http", "https":
-		t.Proxy = http.ProxyURL(proxyURL)
+		ct.Transport.Proxy = http.ProxyURL(proxyURL)
+		ct.Transport.DialContext = nil
 	case "socks5":
 		var auth *proxy.Auth
 		if proxyURL.User != nil {
@@ -185,25 +180,23 @@ func (r *GoProxy) SetProxy(s string) error {
 		}
 		dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
 		if err != nil {
-			return fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
+			return fmt.Errorf("创建SOCKS5代理失败: %w", err)
 		}
-		t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		ct.Transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		}
+		ct.Transport.Proxy = nil
 	default:
-		return fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
-	}
-
-	r.client.Transport = &CustomTransport{
-		GlobalHeader: http.Header{"User-Agent": []string{DefaultUA}},
-		Transport:    t,
+		return fmt.Errorf("不支持的代理协议: %s", proxyURL.Scheme)
 	}
 	r.proxyUrl = s
-	return nil
+	return nil // 设置成功
 }
 
 // SetTimeout 设置HTTP请求的超时时间
 func (r *GoProxy) SetTimeout(timeout time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.client.Timeout = timeout
 }
 
@@ -224,11 +217,6 @@ func (r *GoProxy) String() string {
 
 // 添加一个设置全局请求头的方法
 func (r *GoProxy) SetGlobalHeader(key, value string) {
-	if r.client.Transport == nil {
-		r.client.Transport = &CustomTransport{
-			Transport: cloneDefaultTransport(),
-		}
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.client.Transport.(*CustomTransport).SetHeader(key, value)
@@ -236,47 +224,47 @@ func (r *GoProxy) SetGlobalHeader(key, value string) {
 
 // 添加一个删除全局请求头的方法
 func (r *GoProxy) DelGlobalHeader(key string) {
-	if r.client.Transport != nil {
-		r.client.Transport.(*CustomTransport).DelHeader(key)
-	}
+	r.client.Transport.(*CustomTransport).DelHeader(key)
 }
 
 // 添加一个清除所有全局请求头的方法
 func (r *GoProxy) ClearGlobalHeaders() {
-	if r.client.Transport != nil {
-		r.client.Transport.(*CustomTransport).ClearHeaders()
-	}
+	r.client.Transport.(*CustomTransport).ClearHeaders()
 }
 
 // 添加一个获取全局请求头的方法
 func (r *GoProxy) GetGlobalHeaders() http.Header {
-	if r.client.Transport != nil {
-		return r.client.Transport.(*CustomTransport).GlobalHeader
-	}
-	return nil
+	return r.client.Transport.(*CustomTransport).GlobalHeader
 }
 
 // 自动设置UserAgent
 func (r *GoProxy) AutoSetUserAgent(autoSet bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.client.Transport != nil {
-		if _, ok := r.client.Transport.(*CustomTransport).GlobalHeader["User-Agent"]; ok {
-			return
-		}
+	if _, ok := r.client.Transport.(*CustomTransport).GlobalHeader["User-Agent"]; ok {
+		return
 	}
 	if autoSet {
-		if r.client.Transport != nil {
-			r.client.Transport.(*CustomTransport).SetHeader("User-Agent", DefaultUA)
-		} else {
-			r.client.Transport = &CustomTransport{
-				GlobalHeader: http.Header{"User-Agent": []string{DefaultUA}},
-				Transport:    cloneDefaultTransport(),
-			}
-		}
+		r.client.Transport.(*CustomTransport).SetHeader("User-Agent", DefaultUA)
 	} else {
-		if r.client.Transport != nil {
-			r.client.Transport.(*CustomTransport).DelHeader("User-Agent")
-		}
+		r.client.Transport.(*CustomTransport).DelHeader("User-Agent")
 	}
+}
+
+func (r *GoProxy) SetCheckRedirect(checkRedirect func(req *http.Request, via []*http.Request) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.client.CheckRedirect = checkRedirect
+}
+
+func (r *GoProxy) SetTransport(transport *http.Transport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ct := r.client.Transport.(*CustomTransport)
+	if transport == nil {
+		// 如果传入的transport为nil，则使用默认的transport避免panic
+		ct.Transport = &http.Transport{}
+		return
+	}
+	ct.Transport = transport
 }

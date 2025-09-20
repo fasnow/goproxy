@@ -154,6 +154,8 @@ func (r *GoProxy) SetProxy(s string) error {
 	defer r.mu.Unlock()
 	ct := r.client.Transport.(*CustomTransport)
 	if s == "" {
+		ct.Transport.Proxy = nil
+		ct.Transport.DialContext = nil
 		r.proxyUrl = ""
 		return nil // 不使用代理，设置成功
 	}
